@@ -1,0 +1,418 @@
+{% extends "base.html" %}
+{% block title %}Matrice des Risques{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Matrice des Risques ISTQB</h1>
+    <button id="createMatrixBtn" class="btn btn-primary">+ Créer une matrice</button>
+</div>
+
+<!-- Modal création matrice -->
+<div id="createMatrixModal" class="modal hidden">
+    <div class="modal-content">
+        <h2>Nouvelle matrice des risques</h2>
+        <div class="form-group">
+            <label for="matrixName">Nom :</label>
+            <input type="text" id="matrixName" class="input-control" placeholder="Ex: Plan de test Sprint 14">
+        </div>
+        <div class="form-group">
+            <label for="matrixVersion">Version / Release :</label>
+            <input type="text" id="matrixVersion" class="input-control" placeholder="Ex: v3.2.1, R14, Release 2026-Q1">
+        </div>
+        <div class="form-group">
+            <label for="matrixParent">Hériter de :</label>
+            <select id="matrixParent" class="select-control">
+                <option value="">Aucune (matrice vierge)</option>
+            </select>
+        </div>
+        <div class="modal-actions">
+            <button id="confirmCreateMatrix" class="btn btn-primary">Créer</button>
+            <button id="cancelCreateMatrix" class="btn btn-secondary">Annuler</button>
+        </div>
+    </div>
+</div>
+
+<!-- Liste des matrices -->
+<div class="card" id="matrixListCard">
+    <h2>Matrices existantes</h2>
+    <div id="matrixList" class="matrix-list">
+        <p class="placeholder-text">Chargement...</p>
+    </div>
+</div>
+
+<!-- Détail d'une matrice (caché par défaut) -->
+<div id="matrixDetail" class="hidden">
+    <div class="card">
+        <div class="matrix-header">
+            <div>
+                <h2 id="matrixDetailTitle">-</h2>
+                <p class="subtitle" id="matrixDetailInfo">-</p>
+            </div>
+            <div class="matrix-actions">
+                <label class="btn btn-secondary btn-file">
+                    &#128196; Importer CSV
+                    <input type="file" id="csvFileInput" accept=".csv" style="display:none;">
+                </label>
+                <button id="addRowBtn" class="btn btn-secondary">+ Ajouter une ligne</button>
+                <button id="exportExcelBtn" class="btn btn-primary">&#128229; Export Excel</button>
+                <button id="backToListBtn" class="btn btn-secondary">&#8592; Retour</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Grille matrice visuelle -->
+    <div class="card">
+        <h2>Grille des risques</h2>
+        <div class="risk-grid-container">
+            <table class="risk-grid" id="riskGrid">
+                <thead>
+                    <tr>
+                        <th class="corner">Probabilité \ Impact</th>
+                        <th class="impact-header">Mineur</th>
+                        <th class="impact-header">Modéré</th>
+                        <th class="impact-header">Majeur</th>
+                        <th class="impact-header">Critique</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td class="prob-header">Très élevée</td><td></td><td></td><td></td><td></td></tr>
+                    <tr><td class="prob-header">Élevée</td><td></td><td></td><td></td><td></td></tr>
+                    <tr><td class="prob-header">Moyenne</td><td></td><td></td><td></td><td></td></tr>
+                    <tr><td class="prob-header">Faible</td><td></td><td></td><td></td><td></td></tr>
+                    <tr><td class="prob-header">Très faible</td><td></td><td></td><td></td><td></td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Tableau détail par ticket -->
+    <div class="card">
+        <h2>Détail par ticket</h2>
+        <table class="data-table" id="detailTable">
+            <thead>
+                <tr>
+                    <th>Module</th>
+                    <th>Fonctionnalité</th>
+                    <th>N° GitLab</th>
+                    <th>Probabilité</th>
+                    <th>Impact</th>
+                    <th>Risque</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="detailTableBody">
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal ajout de ligne -->
+<div id="addRowModal" class="modal hidden">
+    <div class="modal-content">
+        <h2>Ajouter une ligne</h2>
+        <div class="form-group">
+            <label for="newRowModule">Module :</label>
+            <input type="text" id="newRowModule" class="input-control" placeholder="Ex: ARTICLE">
+        </div>
+        <div class="form-group">
+            <label for="newRowFonctionnalite">Fonctionnalité :</label>
+            <input type="text" id="newRowFonctionnalite" class="input-control" placeholder="Description du bug">
+        </div>
+        <div class="form-group">
+            <label for="newRowGitlab">N° GitLab :</label>
+            <input type="text" id="newRowGitlab" class="input-control" placeholder="Ex: 7831">
+        </div>
+        <div class="form-group">
+            <label for="newRowImpact">Impact :</label>
+            <select id="newRowImpact" class="select-control">
+                {% for il in impact_levels %}
+                <option value="{{ il.key }}">{{ il.label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="modal-actions">
+            <button id="confirmAddRow" class="btn btn-primary">Ajouter</button>
+            <button id="cancelAddRow" class="btn btn-secondary">Annuler</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let currentMatrixId = null;
+    const impactLevels = {{ impact_levels | tojson }};
+
+    // ─── Matrice CRUD ───────────────────────────────────────────
+
+    function loadMatrices() {
+        fetch("/api/matrices")
+            .then(r => r.json())
+            .then(matrices => {
+                renderMatrixList(matrices);
+                // Remplir le select parent dans le modal
+                const parentSelect = document.getElementById("matrixParent");
+                parentSelect.innerHTML = '<option value="">Aucune (matrice vierge)</option>';
+                matrices.forEach(m => {
+                    const opt = document.createElement("option");
+                    opt.value = m.id;
+                    opt.textContent = `${m.name} (${m.version})`;
+                    parentSelect.appendChild(opt);
+                });
+            });
+    }
+
+    function renderMatrixList(matrices) {
+        const container = document.getElementById("matrixList");
+        if (!matrices.length) {
+            container.innerHTML = '<p class="placeholder-text">Aucune matrice créée. Cliquez sur "Créer une matrice" pour commencer.</p>';
+            return;
+        }
+        container.innerHTML = matrices.map(m => `
+            <div class="matrix-item" data-id="${m.id}">
+                <div class="matrix-item-info">
+                    <strong>${m.name}</strong>
+                    <span class="badge">${m.version}</span>
+                    <span class="text-muted">${m.row_count || 0} tickets — ${new Date(m.created_at).toLocaleDateString("fr-FR")}</span>
+                </div>
+                <div class="matrix-item-actions">
+                    <button class="btn btn-sm btn-primary" onclick="openMatrix(${m.id})">Ouvrir</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteMatrix(${m.id})">Supprimer</button>
+                </div>
+            </div>
+        `).join("");
+    }
+
+    // Créer une matrice
+    document.getElementById("createMatrixBtn").addEventListener("click", () => {
+        document.getElementById("createMatrixModal").classList.remove("hidden");
+    });
+    document.getElementById("cancelCreateMatrix").addEventListener("click", () => {
+        document.getElementById("createMatrixModal").classList.add("hidden");
+    });
+    document.getElementById("confirmCreateMatrix").addEventListener("click", () => {
+        const name = document.getElementById("matrixName").value.trim();
+        const version = document.getElementById("matrixVersion").value.trim();
+        const parentId = document.getElementById("matrixParent").value || null;
+
+        if (!name || !version) {
+            alert("Nom et version sont requis.");
+            return;
+        }
+
+        fetch("/api/matrices", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, version, parent_id: parentId ? parseInt(parentId) : null })
+        })
+        .then(r => r.json())
+        .then(result => {
+            document.getElementById("createMatrixModal").classList.add("hidden");
+            document.getElementById("matrixName").value = "";
+            document.getElementById("matrixVersion").value = "";
+            loadMatrices();
+            openMatrix(result.id);
+        });
+    });
+
+    function deleteMatrix(id) {
+        if (!confirm("Supprimer cette matrice ?")) return;
+        fetch(`/api/matrices/${id}`, { method: "DELETE" })
+            .then(() => loadMatrices());
+    }
+
+    // ─── Ouvrir une matrice ─────────────────────────────────────
+
+    function openMatrix(id) {
+        currentMatrixId = id;
+        document.getElementById("matrixListCard").classList.add("hidden");
+        document.getElementById("matrixDetail").classList.remove("hidden");
+        loadMatrixDetail(id);
+    }
+
+    document.getElementById("backToListBtn").addEventListener("click", () => {
+        document.getElementById("matrixDetail").classList.add("hidden");
+        document.getElementById("matrixListCard").classList.remove("hidden");
+        currentMatrixId = null;
+        loadMatrices();
+    });
+
+    function loadMatrixDetail(id) {
+        fetch(`/api/matrices/${id}`)
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById("matrixDetailTitle").textContent = data.matrix.name;
+                document.getElementById("matrixDetailInfo").textContent =
+                    `Version: ${data.matrix.version} — Créée le ${new Date(data.matrix.created_at).toLocaleDateString("fr-FR")}`;
+                renderDetailTable(data.rows);
+                renderRiskGrid(data.rows);
+            });
+    }
+
+    function renderDetailTable(rows) {
+        const tbody = document.getElementById("detailTableBody");
+        tbody.innerHTML = "";
+
+        if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="7" class="center text-muted">Aucun ticket. Importez un CSV ou ajoutez manuellement.</td></tr>';
+            return;
+        }
+
+        rows.forEach(row => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td><strong>${row.module}</strong></td>
+                <td>${row.fonctionnalite}</td>
+                <td class="center">${row.gitlab_iid || "-"}</td>
+                <td class="center">
+                    <span class="badge badge-prob">${row.probability ? row.probability.label : "N/A"}</span>
+                </td>
+                <td class="center">
+                    <select class="select-sm impact-select" data-row-id="${row.id}" onchange="updateImpact(this)">
+                        ${impactLevels.map(il =>
+                            `<option value="${il.key}" ${il.key === row.impact_level ? "selected" : ""}>${il.label}</option>`
+                        ).join("")}
+                    </select>
+                </td>
+                <td class="center">
+                    <span class="risk-badge" style="background-color: ${row.risk_color}">${row.risk_label}</span>
+                </td>
+                <td class="center">
+                    <button class="btn btn-sm btn-danger" onclick="deleteRow(${row.id})">&#10005;</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function renderRiskGrid(rows) {
+        const grid = document.getElementById("riskGrid");
+        const tbody = grid.querySelector("tbody");
+        const probLabels = ["Très élevée", "Élevée", "Moyenne", "Faible", "Très faible"];
+        const impactLabels = ["Mineur", "Modéré", "Majeur", "Critique"];
+
+        // Compter les modules dans chaque cellule
+        const cellCounts = {};
+        rows.forEach(row => {
+            if (!row.probability || !row.impact) return;
+            const pVal = row.probability.value;
+            const iVal = row.impact.value;
+            if (iVal === 0) return;
+            const key = `${pVal}-${iVal}`;
+            if (!cellCounts[key]) cellCounts[key] = [];
+            cellCounts[key].push(row.module);
+        });
+
+        // Couleurs de risque
+        const riskColors = {
+            1: "#4caf50", 2: "#ff9800", 3: "#f44336", 4: "#b71c1c"
+        };
+        const riskMatrix = {
+            1: {1:1,2:1,3:2,4:2}, 2: {1:1,2:2,3:2,4:3},
+            3: {1:2,2:2,3:3,4:3}, 4: {1:2,2:3,3:3,4:4},
+            5: {1:3,2:3,3:4,4:4}
+        };
+
+        const trs = tbody.querySelectorAll("tr");
+        trs.forEach((tr, rowIdx) => {
+            const probValue = 5 - rowIdx; // 5=très élevée, 1=très faible
+            const tds = tr.querySelectorAll("td:not(.prob-header)");
+            tds.forEach((td, colIdx) => {
+                const impactValue = colIdx + 1;
+                const riskVal = riskMatrix[probValue]?.[impactValue] || 0;
+                const bgColor = riskColors[riskVal] || "#e0e0e0";
+                td.style.backgroundColor = bgColor;
+                td.style.color = riskVal >= 3 ? "#fff" : "#333";
+
+                const key = `${probValue}-${impactValue}`;
+                const modules = cellCounts[key] || [];
+                td.textContent = modules.length ? modules.join(", ") : "";
+                td.title = modules.length ? `${modules.length} ticket(s)` : "";
+            });
+        });
+    }
+
+    // ─── Actions lignes ─────────────────────────────────────────
+
+    function updateImpact(select) {
+        const rowId = select.dataset.rowId;
+        const impactLevel = select.value;
+        fetch(`/api/matrix-rows/${rowId}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ impact_level: impactLevel })
+        }).then(() => loadMatrixDetail(currentMatrixId));
+    }
+
+    function deleteRow(rowId) {
+        if (!confirm("Supprimer cette ligne ?")) return;
+        fetch(`/api/matrix-rows/${rowId}`, { method: "DELETE" })
+            .then(() => loadMatrixDetail(currentMatrixId));
+    }
+
+    // Ajouter une ligne
+    document.getElementById("addRowBtn").addEventListener("click", () => {
+        document.getElementById("addRowModal").classList.remove("hidden");
+    });
+    document.getElementById("cancelAddRow").addEventListener("click", () => {
+        document.getElementById("addRowModal").classList.add("hidden");
+    });
+    document.getElementById("confirmAddRow").addEventListener("click", () => {
+        const module = document.getElementById("newRowModule").value.trim();
+        const fonctionnalite = document.getElementById("newRowFonctionnalite").value.trim();
+        const gitlabIid = document.getElementById("newRowGitlab").value.trim();
+        const impactLevel = document.getElementById("newRowImpact").value;
+
+        if (!module) {
+            alert("Le module est requis.");
+            return;
+        }
+
+        fetch(`/api/matrices/${currentMatrixId}/rows`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                module, fonctionnalite, gitlab_iid: gitlabIid, impact_level: impactLevel
+            })
+        }).then(() => {
+            document.getElementById("addRowModal").classList.add("hidden");
+            document.getElementById("newRowModule").value = "";
+            document.getElementById("newRowFonctionnalite").value = "";
+            document.getElementById("newRowGitlab").value = "";
+            loadMatrixDetail(currentMatrixId);
+        });
+    });
+
+    // Import CSV
+    document.getElementById("csvFileInput").addEventListener("change", function() {
+        const file = this.files[0];
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        fetch(`/api/matrices/${currentMatrixId}/import-csv`, {
+            method: "POST",
+            body: formData
+        })
+        .then(r => r.json())
+        .then(result => {
+            alert(`${result.count} ticket(s) importé(s) avec succès.`);
+            loadMatrixDetail(currentMatrixId);
+            this.value = "";
+        })
+        .catch(err => {
+            alert("Erreur lors de l'import : " + err.message);
+            this.value = "";
+        });
+    });
+
+    // Export Excel
+    document.getElementById("exportExcelBtn").addEventListener("click", () => {
+        window.location.href = `/api/matrices/${currentMatrixId}/export-excel`;
+    });
+
+    // ─── Init ───────────────────────────────────────────────────
+    loadMatrices();
+</script>
+{% endblock %}

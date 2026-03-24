@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QA Bug Tracker — {% block title %}Dashboard{% endblock %}</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <span class="nav-logo">&#128027;</span>
+            QA Bug Tracker
+        </div>
+        <div class="nav-links">
+            <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">
+                &#128202; Dashboard Bugs
+            </a>
+            <a href="/risk-matrix" class="nav-link {% if request.path == '/risk-matrix' %}active{% endif %}">
+                &#9878; Matrice des Risques
+            </a>
+        </div>
+        {% if is_mock %}
+        <div class="mock-badge">MODE DEMO</div>
+        {% endif %}
+    </nav>
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <p>QA Bug Tracker — Matrice des Risques ISTQB &copy; {{ current_year if current_year else 2026 }}</p>
+    </footer>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

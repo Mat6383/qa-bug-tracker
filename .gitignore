@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+*.db
+*.sqlite3
+output/report.html
+.venv/
+venv/
+*.egg-info/
+dist/
+build/

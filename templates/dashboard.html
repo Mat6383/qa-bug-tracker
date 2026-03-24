@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}Dashboard Bugs{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Dashboard des Bugs</h1>
+    <div class="controls">
+        <label for="yearSelect">Année :</label>
+        <select id="yearSelect" class="select-control">
+            <option value="">Toutes (depuis 2023)</option>
+        </select>
+        <button id="refreshBtn" class="btn btn-secondary" title="Rafraîchir les données">
+            &#8635; Rafraîchir
+        </button>
+    </div>
+</div>
+
+<!-- KPI Cards -->
+<div class="kpi-row" id="kpiRow">
+    <div class="kpi-card">
+        <div class="kpi-value" id="kpiTotal">-</div>
+        <div class="kpi-label">Total Bugs</div>
+    </div>
+    <div class="kpi-card kpi-prod">
+        <div class="kpi-value" id="kpiProd">-</div>
+        <div class="kpi-label">Retours Prod</div>
+    </div>
+    <div class="kpi-card kpi-preprod">
+        <div class="kpi-value" id="kpiPreprod">-</div>
+        <div class="kpi-label">Retours Préprod</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-value" id="kpiModules">-</div>
+        <div class="kpi-label">Modules touchés</div>
+    </div>
+</div>
+
+<!-- Graphique -->
+<div class="card">
+    <h2>Nombre de bugs par module</h2>
+    <div id="bugChart" style="width:100%; height:450px;"></div>
+</div>
+
+<!-- Tableau récapitulatif -->
+<div class="card">
+    <h2>Détail par module</h2>
+    <table class="data-table" id="moduleTable">
+        <thead>
+            <tr>
+                <th>Module</th>
+                <th>Bugs Prod</th>
+                <th>Bugs Préprod</th>
+                <th>Total</th>
+                <th>% du total</th>
+            </tr>
+        </thead>
+        <tbody id="moduleTableBody">
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const currentYear = {{ current_year }};
+
+    // Remplir le sélecteur d'années
+    const yearSelect = document.getElementById("yearSelect");
+    for (let y = 2023; y <= currentYear; y++) {
+        const opt = document.createElement("option");
+        opt.value = y;
+        opt.textContent = y;
+        yearSelect.appendChild(opt);
+    }
+
+    function loadData() {
+        const year = yearSelect.value;
+        const url = year ? `/api/bugs-data?year=${year}` : "/api/bugs-data";
+
+        fetch(url)
+            .then(r => r.json())
+            .then(data => {
+                renderKPIs(data);
+                renderChart(data);
+                renderTable(data);
+            })
+            .catch(err => console.error("Erreur:", err));
+    }
+
+    function renderKPIs(data) {
+        document.getElementById("kpiTotal").textContent = data.total;
+        document.getElementById("kpiProd").textContent = data.total_prod;
+        document.getElementById("kpiPreprod").textContent = data.total_preprod;
+        document.getElementById("kpiModules").textContent = data.modules_summary.length;
+    }
+
+    function renderChart(data) {
+        const modules = data.modules_summary.map(m => m.module);
+        const prodValues = data.modules_summary.map(m => m.prod);
+        const preprodValues = data.modules_summary.map(m => m.preprod);
+
+        const traceProd = {
+            x: modules,
+            y: prodValues,
+            name: "Retours Prod",
+            type: "bar",
+            marker: { color: "#e74c3c" }
+        };
+
+        const tracePreprod = {
+            x: modules,
+            y: preprodValues,
+            name: "Retours Préprod",
+            type: "bar",
+            marker: { color: "#f39c12" }
+        };
+
+        const yearLabel = data.year ? ` (${data.year})` : " (depuis 2023)";
+
+        Plotly.newPlot("bugChart", [traceProd, tracePreprod], {
+            barmode: "stack",
+            title: `Bugs par module${yearLabel}`,
+            xaxis: { title: "Module", tickangle: -30 },
+            yaxis: { title: "Nombre de bugs" },
+            legend: { orientation: "h", y: 1.15 },
+            margin: { b: 100 },
+            plot_bgcolor: "#fafafa",
+            paper_bgcolor: "#ffffff",
+        }, { responsive: true });
+    }
+
+    function renderTable(data) {
+        const tbody = document.getElementById("moduleTableBody");
+        tbody.innerHTML = "";
+
+        data.modules_summary.forEach(m => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td><strong>${m.module}</strong></td>
+                <td class="center">${m.prod}</td>
+                <td class="center">${m.preprod}</td>
+                <td class="center"><strong>${m.total}</strong></td>
+                <td class="center">${m.percentage}%</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    // Événements
+    yearSelect.addEventListener("change", loadData);
+    document.getElementById("refreshBtn").addEventListener("click", () => {
+        fetch("/api/refresh-cache", { method: "POST" })
+            .then(() => loadData());
+    });
+
+    // Chargement initial
+    loadData();
+</script>
+{% endblock %}
