@@ -1,7 +1,6 @@
-"""Script autonome pour la génération du rapport HTML statique.
-
-Conçu pour être exécuté via le Planificateur de tâches Windows (ou cron Linux).
-Exécution prévue : 13h00 et 19h00.
+"""
+Script autonome pour generation du rapport HTML statique.
+A executer via cron/Task Scheduler a 13h et 19h.
 
 Usage:
     python cron_job.py
@@ -10,94 +9,141 @@ Usage:
 import os
 import json
 from datetime import datetime
-from config import config
-from gitlab_client import fetch_issues, filter_bug_issues
+from config import Config
+from database import init_db
+from gitlab_client import fetch_all_bug_issues
 from data_processor import process_issues
 
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
-OUTPUT_FILE = os.path.join(OUTPUT_DIR, "report.html")
 
-
-def generate_report():
-    """Générer le rapport HTML statique."""
-    print(f"[{datetime.now()}] Récupération des données GitLab...")
-    issues = fetch_issues()
-    bug_issues = filter_bug_issues(issues)
-    data = process_issues(bug_issues)
-    data_all_years = data
-
-    # Données par année
-    current_year = datetime.now().year
-    yearly_data = {}
-    for year in range(2023, current_year + 1):
-        yearly_data[year] = process_issues(bug_issues, year=year)
-
-    print(f"[{datetime.now()}] {data['total']} bugs trouvés. Génération du rapport...")
-
-    # Générer le HTML
-    modules_json = json.dumps(data["modules_summary"])
-    yearly_json = json.dumps({str(k): v for k, v in yearly_data.items()})
-
-    html = f"""<!DOCTYPE html>
+HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>QA Bug Report — {datetime.now().strftime('%d/%m/%Y %H:%M')}</title>
+    <title>Rapport Bugs ERP - {date}</title>
     <script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
     <style>
-        body {{ font-family: 'Segoe UI', sans-serif; margin: 2rem; background: #f5f5f5; }}
-        .header {{ background: #1a237e; color: white; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem; }}
-        .header h1 {{ margin: 0; }} .header p {{ margin: 0.5rem 0 0; opacity: 0.8; }}
-        .card {{ background: white; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-        .kpi-row {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem; }}
-        .kpi {{ background: white; border-radius: 8px; padding: 1rem; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-        .kpi-val {{ font-size: 2rem; font-weight: 800; color: #1a237e; }}
-        .kpi-lbl {{ font-size: 0.8rem; color: #888; text-transform: uppercase; }}
-        table {{ width: 100%; border-collapse: collapse; }}
-        th {{ background: #1a237e; color: white; padding: 0.6rem; text-align: left; }}
-        td {{ padding: 0.5rem 0.6rem; border-bottom: 1px solid #eee; }}
-        tr:hover {{ background: #f9f9f9; }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; color: #2c3e50; padding: 2rem; }}
+        .header {{ text-align: center; margin-bottom: 2rem; }}
+        .header h1 {{ font-size: 1.8rem; }}
+        .header p {{ color: #7f8c8d; }}
+        .kpi-row {{ display: flex; gap: 1rem; justify-content: center; margin-bottom: 2rem; flex-wrap: wrap; }}
+        .kpi {{ background: white; border-radius: 10px; padding: 1rem 2rem; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }}
+        .kpi-value {{ font-size: 2rem; font-weight: 700; }}
+        .kpi-label {{ font-size: 0.85rem; color: #7f8c8d; }}
+        .card {{ background: white; border-radius: 10px; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }}
+        .card h2 {{ font-size: 1.2rem; margin-bottom: 1rem; border-bottom: 2px solid #f0f2f5; padding-bottom: 0.5rem; }}
+        table {{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }}
+        th {{ background: #2c3e50; color: white; padding: 0.7rem; }}
+        td {{ padding: 0.6rem; text-align: center; border-bottom: 1px solid #ecf0f1; }}
+        tr:hover {{ background: #f8f9fa; }}
+        .prod {{ color: #e74c3c; font-weight: 600; }}
+        .preprod {{ color: #f39c12; font-weight: 600; }}
+        .chart {{ min-height: 400px; }}
+        .footer {{ text-align: center; color: #95a5a6; margin-top: 2rem; font-size: 0.85rem; }}
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>QA Bug Report</h1>
-        <p>Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')} — Données depuis le 01/01/2023</p>
+        <h1>Rapport Bugs ERP</h1>
+        <p>Genere automatiquement le {date} | Donnees depuis janvier 2023</p>
+        <p>{mode}</p>
     </div>
+
     <div class="kpi-row">
-        <div class="kpi"><div class="kpi-val">{data['total']}</div><div class="kpi-lbl">Total bugs</div></div>
-        <div class="kpi"><div class="kpi-val" style="color:#e74c3c">{data['total_prod']}</div><div class="kpi-lbl">Retours Prod</div></div>
-        <div class="kpi"><div class="kpi-val" style="color:#f39c12">{data['total_preprod']}</div><div class="kpi-lbl">Retours Préprod</div></div>
-        <div class="kpi"><div class="kpi-val">{len(data['modules_summary'])}</div><div class="kpi-lbl">Modules touchés</div></div>
+        <div class="kpi"><div class="kpi-value">{total}</div><div class="kpi-label">Total bugs</div></div>
+        <div class="kpi"><div class="kpi-value prod">{total_prod}</div><div class="kpi-label">Production</div></div>
+        <div class="kpi"><div class="kpi-value preprod">{total_preprod}</div><div class="kpi-label">Preproduction</div></div>
+        <div class="kpi"><div class="kpi-value">{nb_modules}</div><div class="kpi-label">Modules</div></div>
     </div>
+
     <div class="card">
-        <h2>Bugs par module (cumulé)</h2>
-        <div id="chart" style="height:400px;"></div>
+        <h2>Repartition des bugs par module</h2>
+        <div id="chart" class="chart"></div>
     </div>
+
     <div class="card">
-        <h2>Détail par module</h2>
+        <h2>Detail par module</h2>
         <table>
-            <thead><tr><th>Module</th><th>Prod</th><th>Préprod</th><th>Total</th><th>%</th></tr></thead>
-            <tbody>
-                {"".join(f'<tr><td><strong>{m["module"]}</strong></td><td>{m["prod"]}</td><td>{m["preprod"]}</td><td><strong>{m["total"]}</strong></td><td>{m["percentage"]}%</td></tr>' for m in data["modules_summary"])}
-            </tbody>
+            <thead><tr><th>Rang</th><th>Module</th><th>Prod</th><th>Preprod</th><th>Total</th><th>%</th></tr></thead>
+            <tbody>{table_rows}</tbody>
         </table>
     </div>
+
+    <div class="footer">QA Bug Tracker - Rapport automatique</div>
+
     <script>
-        const data = {modules_json};
-        Plotly.newPlot('chart', [
-            {{ x: data.map(m=>m.module), y: data.map(m=>m.prod), name: 'Prod', type: 'bar', marker: {{color:'#e74c3c'}} }},
-            {{ x: data.map(m=>m.module), y: data.map(m=>m.preprod), name: 'Préprod', type: 'bar', marker: {{color:'#f39c12'}} }}
-        ], {{ barmode:'stack', margin:{{b:80}}, legend:{{orientation:'h',y:1.1}} }}, {{responsive:true}});
+        var data = {chart_data};
+        var traces = [
+            {{ x: data.modules, y: data.prod, name: 'Production', type: 'bar', marker: {{ color: '#e74c3c' }} }},
+            {{ x: data.modules, y: data.preprod, name: 'Preproduction', type: 'bar', marker: {{ color: '#f39c12' }} }}
+        ];
+        Plotly.newPlot('chart', traces, {{
+            barmode: 'stack',
+            xaxis: {{ tickangle: -45 }},
+            yaxis: {{ title: 'Nombre de bugs' }},
+            margin: {{ b: 120, t: 20 }},
+            legend: {{ orientation: 'h', y: 1.1 }}
+        }});
     </script>
 </body>
 </html>"""
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+
+def generate_report():
+    """Genere le rapport HTML statique."""
+    print(f"[{datetime.now()}] Debut de la generation du rapport...")
+
+    init_db()
+    issues = fetch_all_bug_issues()
+    data = process_issues(issues)
+
+    # Preparer les donnees pour le graphique
+    modules_list = [m for m, _ in data["modules_ranked"]]
+    prod_list = [s["prod"] for _, s in data["modules_ranked"]]
+    preprod_list = [s["preprod"] for _, s in data["modules_ranked"]]
+
+    chart_data = json.dumps({
+        "modules": modules_list,
+        "prod": prod_list,
+        "preprod": preprod_list,
+    })
+
+    # Generer les lignes du tableau
+    table_rows = ""
+    for i, (module, stats) in enumerate(data["modules_ranked"], 1):
+        table_rows += (
+            f'<tr><td>{i}</td><td><strong>{module}</strong></td>'
+            f'<td class="prod">{stats["prod"]}</td>'
+            f'<td class="preprod">{stats["preprod"]}</td>'
+            f'<td><strong>{stats["total"]}</strong></td>'
+            f'<td>{stats["percentage"]}%</td></tr>\n'
+        )
+
+    total_prod = sum(s["prod"] for _, s in data["modules_ranked"])
+    total_preprod = sum(s["preprod"] for _, s in data["modules_ranked"])
+
+    mode = "Mode DEMO (donnees simulees)" if not Config.is_gitlab_configured() else "GitLab connecte"
+
+    html = HTML_TEMPLATE.format(
+        date=datetime.now().strftime("%d/%m/%Y a %H:%M"),
+        total=data["total_issues"],
+        total_prod=total_prod,
+        total_preprod=total_preprod,
+        nb_modules=len(data["modules_ranked"]),
+        table_rows=table_rows,
+        chart_data=chart_data,
+        mode=mode,
+    )
+
+    # Ecrire le fichier
+    os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
+    output_path = os.path.join(Config.OUTPUT_DIR, "report.html")
+    with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
 
-    print(f"[{datetime.now()}] Rapport généré : {OUTPUT_FILE}")
+    print(f"[{datetime.now()}] Rapport genere: {output_path}")
+    return output_path
 
 
 if __name__ == "__main__":

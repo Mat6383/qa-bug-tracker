@@ -1,5 +1,3 @@
-"""Configuration de l'application QA Bug Tracker."""
-
 import os
 from dotenv import load_dotenv
 
@@ -7,24 +5,24 @@ load_dotenv()
 
 
 class Config:
-    """Configuration de base."""
-    GITLAB_URL = os.getenv("GITLAB_URL", "https://gitlab.example.fr")
+    GITLAB_URL = os.getenv("GITLAB_URL", "https://gitlab.example.com")
     GITLAB_TOKEN = os.getenv("GITLAB_TOKEN", "")
     GITLAB_PROJECT_ID = os.getenv("GITLAB_PROJECT_ID", "")
+
     APP_MODE = os.getenv("APP_MODE", "local")
-    APP_HOST = os.getenv("APP_HOST", "127.0.0.1")
     APP_PORT = int(os.getenv("APP_PORT", 5000))
+    APP_HOST = os.getenv("APP_HOST", "127.0.0.1")
+
     DATABASE_PATH = os.path.join(os.path.dirname(__file__), "qa_bug_tracker.db")
-    SECRET_KEY = os.getenv("SECRET_KEY", "qa-bug-tracker-secret-key-change-me")
+    OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 
-    @property
-    def is_mock_mode(self):
-        """Mode mock si pas de token GitLab."""
-        return not self.GITLAB_TOKEN
+    # Date de debut de collecte
+    DATA_START_DATE = "2023-01-01"
 
-    @property
-    def is_local(self):
-        return self.APP_MODE == "local"
+    @classmethod
+    def is_gitlab_configured(cls):
+        return bool(cls.GITLAB_TOKEN) and cls.GITLAB_TOKEN != "your_private_token_here"
 
-
-config = Config()
+    @classmethod
+    def is_server_mode(cls):
+        return cls.APP_MODE == "server"
