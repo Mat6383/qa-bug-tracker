@@ -308,4 +308,5 @@ if __name__ == "__main__":
         host=Config.APP_HOST,
         port=Config.APP_PORT,
         debug=Config.APP_MODE == "local",
+        use_reloader=False,
     )
