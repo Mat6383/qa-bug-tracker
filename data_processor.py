@@ -1,185 +1,168 @@
 """
-Traitement des issues : extraction des modules, comptage, classement,
-calcul de la frequence pour la matrice des risques ISTQB.
+Traitement des issues : extraction modules, comptage, probabilite ISTQB.
 """
 
 import re
-from collections import defaultdict, Counter
+from collections import defaultdict
 
 
-# Seuils ISTQB pour la probabilite (basés sur la frequence relative)
+# ─── Niveaux ISTQB ────────────────────────────────────────────────────────────
+
+# (key, label, value_numerique, seuil_pourcentage)
 PROBABILITY_LEVELS = [
-    ("tres_elevee", "Très élevée", 20),    # >= 20% des bugs
-    ("elevee", "Élevée", 12),               # >= 12%
-    ("moyenne", "Moyenne", 6),              # >= 6%
-    ("faible", "Faible", 2),               # >= 2%
-    ("tres_faible", "Très faible", 0),     # < 2%
+    ("tres_elevee", "Très élevée", 5, 20),
+    ("elevee",      "Élevée",      4, 12),
+    ("moyenne",     "Moyenne",     3,  6),
+    ("faible",      "Faible",      2,  2),
+    ("tres_faible", "Très faible", 1,  0),
 ]
 
-IMPACT_LEVELS = {
-    "critique": {"label": "Critique", "value": 4},
-    "majeur": {"label": "Majeur", "value": 3},
-    "modere": {"label": "Modéré", "value": 2},
-    "mineur": {"label": "Mineur", "value": 1},
-    "non_defini": {"label": "Non défini", "value": 0},
+# Liste ordonnée pour les selects HTML
+IMPACT_LEVELS = [
+    {"key": "critique",   "label": "Critique",   "value": 4},
+    {"key": "majeur",     "label": "Majeur",      "value": 3},
+    {"key": "modere",     "label": "Modéré",      "value": 2},
+    {"key": "mineur",     "label": "Mineur",      "value": 1},
+    {"key": "non_defini", "label": "Non défini",  "value": 0},
+]
+
+# Dict pour accès rapide
+IMPACT_DICT = {il["key"]: il for il in IMPACT_LEVELS}
+
+RISK_COLORS = {
+    "critique":   "#e74c3c",
+    "eleve":      "#e67e22",
+    "moyen":      "#f1c40f",
+    "faible":     "#27ae60",
+    "non_evalue": "#95a5a6",
 }
 
-# Matrice de risque : probabilite x impact -> niveau de risque
-# Valeurs: probabilite_value (1-5) * impact_value (1-4)
-RISK_COLORS = {
-    "critique": "#e74c3c",      # Rouge
-    "eleve": "#e67e22",         # Orange
-    "moyen": "#f1c40f",         # Jaune
-    "faible": "#27ae60",        # Vert
-    "non_evalue": "#95a5a6",    # Gris
-}
+
+# ─── Extraction titre ─────────────────────────────────────────────────────────
+
+def extract_all_modules(title):
+    """Retourne tous les modules [X][Y] en début de titre."""
+    matches = re.findall(r'\[([^\]]+)\]', title)
+    return [m.strip().upper() for m in matches] if matches else ["NON CLASSÉ"]
+
+
+def extract_fonctionnalite(title):
+    """Retourne la description après les [MODULE] du titre."""
+    result = re.sub(r'^(\s*\[[^\]]+\]\s*)+', '', title).strip()
+    return result if result else title
 
 
 def _normalize_label(label):
     return re.sub(r":{2,}", " ", label.strip()).lower().strip()
 
 
-def extract_module(title):
-    """Extrait le module entre crochets dans le titre."""
-    match = re.match(r"\[([^\]]+)\]", title)
-    if match:
-        return match.group(1).strip().upper()
-    return "NON CLASSÉ"
-
-
 def classify_issue_type(labels):
-    """Determine si l'issue est prod ou preprod."""
+    """Détermine si l'issue est prod ou préprod."""
     for label in labels:
-        normalized = _normalize_label(label)
-        if "immédiat" in normalized or "immediat" in normalized:
-            if "prod" in normalized:
-                return "prod"
-        if "urgent" in normalized and ("préprod" in normalized or "preprod" in normalized):
+        norm = _normalize_label(label)
+        if ("immédiat" in norm or "immediat" in norm) and "prod" in norm:
+            return "prod"
+        if "urgent" in norm and ("préprod" in norm or "preprod" in norm):
             return "preprod"
-    return "unknown"
+    return "preprod"
 
 
-def process_issues(issues):
+# ─── Traitement issues ────────────────────────────────────────────────────────
+
+def process_issues(issues, year=None):
     """
-    Traite les issues et retourne les donnees structurees.
-    Retourne un dict avec :
-    - modules_summary: {module: {prod: int, preprod: int, total: int, issues: []}}
-    - total_issues: int
-    - modules_ranked: [(module, total), ...] trié par total desc
+    Traite les issues GitLab.
+    - year : filtre optionnel (int ou str)
+    Retourne un dict avec total, total_prod, total_preprod, modules, modules_ranked.
     """
-    modules = defaultdict(lambda: {"prod": 0, "preprod": 0, "total": 0, "issues": []})
+    if year:
+        year_str = str(year)
+        issues = [i for i in issues if i.get("created_at", "")[:4] == year_str]
+
+    modules = defaultdict(lambda: {"prod": 0, "preprod": 0, "total": 0})
 
     for issue in issues:
-        module = extract_module(issue.get("title", ""))
-        issue_type = classify_issue_type(issue.get("labels", []))
+        title = issue.get("title", "")
+        all_mods = extract_all_modules(title)
+        itype = classify_issue_type(issue.get("labels", []))
 
-        if issue_type == "prod":
-            modules[module]["prod"] += 1
-        elif issue_type == "preprod":
-            modules[module]["preprod"] += 1
-        else:
-            modules[module]["preprod"] += 1  # Par defaut en preprod
+        for mod in all_mods:
+            if itype == "prod":
+                modules[mod]["prod"] += 1
+            else:
+                modules[mod]["preprod"] += 1
+            modules[mod]["total"] += 1
 
-        modules[module]["total"] += 1
-        modules[module]["issues"].append({
-            "iid": issue.get("iid"),
-            "title": issue.get("title"),
-            "state": issue.get("state"),
-            "type": issue_type,
-            "created_at": issue.get("created_at", ""),
-            "web_url": issue.get("web_url", ""),
-        })
+    grand_total = sum(m["total"] for m in modules.values())
 
-    total = sum(m["total"] for m in modules.values())
-
-    # Calcul du pourcentage
     for mod_data in modules.values():
-        mod_data["percentage"] = round(mod_data["total"] / total * 100, 1) if total > 0 else 0
+        mod_data["percentage"] = (
+            round(mod_data["total"] / grand_total * 100, 1) if grand_total > 0 else 0
+        )
 
-    # Classement par total décroissant
     modules_ranked = sorted(modules.items(), key=lambda x: x[1]["total"], reverse=True)
+    total_prod = sum(m["prod"] for m in modules.values())
+    total_preprod = sum(m["preprod"] for m in modules.values())
 
     return {
-        "modules_summary": dict(modules),
-        "total_issues": total,
+        "modules":        dict(modules),
         "modules_ranked": modules_ranked,
+        "total":          grand_total,
+        "total_prod":     total_prod,
+        "total_preprod":  total_preprod,
     }
 
 
-def get_probability_level(percentage):
-    """Determine le niveau de probabilite ISTQB selon le pourcentage."""
-    for key, label, threshold in PROBABILITY_LEVELS:
-        if percentage >= threshold:
-            return key, label
-    return "tres_faible", "Très faible"
+# ─── Calculs risque ───────────────────────────────────────────────────────────
+
+def get_probability(module_field, modules_data):
+    """
+    Calcule la probabilité pour un champ module (peut être "EDI, ARTICLE").
+    Prend le module ayant le plus de bugs.
+    """
+    mod_list = [m.strip() for m in module_field.split(",")]
+    best_pct = max(
+        (modules_data[m]["percentage"] for m in mod_list if m in modules_data),
+        default=0
+    )
+    for key, label, value, threshold in PROBABILITY_LEVELS:
+        if best_pct >= threshold:
+            return {"key": key, "label": label, "value": value}
+    return {"key": "tres_faible", "label": "Très faible", "value": 1}
 
 
-def get_probability_value(level_key):
-    """Retourne la valeur numerique de la probabilite (1-5)."""
-    mapping = {
-        "tres_elevee": 5,
-        "elevee": 4,
-        "moyenne": 3,
-        "faible": 2,
-        "tres_faible": 1,
-    }
-    return mapping.get(level_key, 1)
-
-
-def compute_risk_level(probability_value, impact_value):
-    """Calcule le niveau de risque : probabilite x impact."""
+def compute_risk(prob_value, impact_value):
+    """Retourne le niveau de risque ISTQB (clé, label, couleur)."""
     if impact_value == 0:
-        return "non_evalue", "Non évalué", RISK_COLORS["non_evalue"]
+        return {"key": "non_evalue", "label": "Non évalué", "color": RISK_COLORS["non_evalue"]}
 
-    score = probability_value * impact_value
+    score = prob_value * impact_value
 
     if score >= 12:
-        return "critique", "Critique", RISK_COLORS["critique"]
+        return {"key": "critique", "label": "Critique", "color": RISK_COLORS["critique"]}
     elif score >= 8:
-        return "eleve", "Élevé", RISK_COLORS["eleve"]
+        return {"key": "eleve",    "label": "Élevé",    "color": RISK_COLORS["eleve"]}
     elif score >= 4:
-        return "moyen", "Moyen", RISK_COLORS["moyen"]
+        return {"key": "moyen",    "label": "Moyen",    "color": RISK_COLORS["moyen"]}
     else:
-        return "faible", "Faible", RISK_COLORS["faible"]
+        return {"key": "faible",   "label": "Faible",   "color": RISK_COLORS["faible"]}
 
 
-def build_risk_matrix_data(modules_summary, module_impacts):
+def enrich_row(row, modules_data):
     """
-    Construit les donnees de la matrice des risques.
-    modules_summary: sortie de process_issues
-    module_impacts: {module_name: impact_level_key} depuis la BDD
+    Enrichit une ligne de matrice avec probabilité, impact et risque calculés.
+    row : dict depuis la BDD (module, fonctionnalite, gitlab_iid, impact_level, ...)
     """
-    total = sum(m["total"] for m in modules_summary.values())
-    matrix_data = []
+    prob = get_probability(row.get("module", ""), modules_data)
+    impact_key = row.get("impact_level", "non_defini")
+    impact = IMPACT_DICT.get(impact_key, IMPACT_DICT["non_defini"])
+    risk = compute_risk(prob["value"], impact["value"])
 
-    for module, data in sorted(modules_summary.items()):
-        percentage = data.get("percentage", 0)
-        prob_key, prob_label = get_probability_level(percentage)
-        prob_value = get_probability_value(prob_key)
-
-        impact_key = module_impacts.get(module, "non_defini")
-        impact_info = IMPACT_LEVELS.get(impact_key, IMPACT_LEVELS["non_defini"])
-
-        risk_key, risk_label, risk_color = compute_risk_level(prob_value, impact_info["value"])
-
-        matrix_data.append({
-            "module": module,
-            "bug_count": data["total"],
-            "prod_count": data["prod"],
-            "preprod_count": data["preprod"],
-            "percentage": percentage,
-            "probability_key": prob_key,
-            "probability_label": prob_label,
-            "probability_value": prob_value,
-            "impact_key": impact_key,
-            "impact_label": impact_info["label"],
-            "impact_value": impact_info["value"],
-            "risk_key": risk_key,
-            "risk_label": risk_label,
-            "risk_color": risk_color,
-        })
-
-    # Trier par score de risque decroissant
-    matrix_data.sort(key=lambda x: x["probability_value"] * x["impact_value"], reverse=True)
-
-    return matrix_data
+    return {
+        **row,
+        "probability":  prob,
+        "impact":       impact,
+        "risk_label":   risk["label"],
+        "risk_color":   risk["color"],
+        "risk_key":     risk["key"],
+    }

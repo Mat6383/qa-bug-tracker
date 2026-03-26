@@ -18,6 +18,7 @@ class Config:
 
     # Date de debut de collecte
     DATA_START_DATE = "2023-01-01"
+    GITLAB_VERIFY_SSL = os.getenv("GITLAB_VERIFY_SSL", "true").lower() != "false"
 
     @classmethod
     def is_gitlab_configured(cls):

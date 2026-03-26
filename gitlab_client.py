@@ -5,8 +5,11 @@ Bascule automatiquement en mode mock si pas de token configure.
 
 import re
 import requests
+import urllib3
 from config import Config
 from mock_data import generate_mock_issues
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def _normalize_label(label):
@@ -36,7 +39,8 @@ def _fetch_issues_by_label(project_id, label, created_after):
             "state": "all",
             "scope": "all",
         }
-        response = requests.get(url, headers=headers, params=params, timeout=30)
+        response = requests.get(url, headers=headers, params=params, timeout=30,
+                                verify=Config.GITLAB_VERIFY_SSL)
         response.raise_for_status()
         issues = response.json()
 
@@ -64,7 +68,8 @@ def search_projects(query):
     url = f"{Config.GITLAB_URL.rstrip('/')}/api/v4/projects"
     headers = {"PRIVATE-TOKEN": Config.GITLAB_TOKEN}
     params = {"search": query, "per_page": 20, "order_by": "name"}
-    response = requests.get(url, headers=headers, params=params, timeout=30)
+    response = requests.get(url, headers=headers, params=params, timeout=30,
+                            verify=Config.GITLAB_VERIFY_SSL)
     response.raise_for_status()
     return response.json()
 

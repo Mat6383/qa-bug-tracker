@@ -1,5 +1,8 @@
+"""
+Base de données SQLite — gestion des matrices et lignes par ticket.
+"""
+
 import sqlite3
-import os
 from datetime import datetime
 from config import Config
 
@@ -13,29 +16,37 @@ def get_db():
 
 def init_db():
     conn = get_db()
-    cursor = conn.cursor()
+    c = conn.cursor()
 
-    cursor.execute("""
+    # Table des matrices
+    c.execute("""
         CREATE TABLE IF NOT EXISTS risk_matrices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            version TEXT NOT NULL,
-            description TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            parent_id INTEGER,
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT    NOT NULL DEFAULT '',
+            version     TEXT    NOT NULL DEFAULT '',
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            parent_id   INTEGER,
             FOREIGN KEY (parent_id) REFERENCES risk_matrices(id)
         )
     """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS module_impacts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            matrix_id INTEGER NOT NULL,
-            module_name TEXT NOT NULL,
-            impact_level TEXT NOT NULL DEFAULT 'non_defini',
-            comment TEXT,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (matrix_id) REFERENCES risk_matrices(id) ON DELETE CASCADE,
-            UNIQUE(matrix_id, module_name)
+    # Migration : ajout colonne name si absente
+    try:
+        c.execute("ALTER TABLE risk_matrices ADD COLUMN name TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass
+
+    # Table des lignes (une ligne = un ticket GitLab)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS matrix_rows (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            matrix_id       INTEGER NOT NULL,
+            module          TEXT    NOT NULL DEFAULT '',
+            fonctionnalite  TEXT    DEFAULT '',
+            gitlab_iid      TEXT    DEFAULT '',
+            impact_level    TEXT    NOT NULL DEFAULT 'non_defini',
+            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (matrix_id) REFERENCES risk_matrices(id) ON DELETE CASCADE
         )
     """)
 
@@ -43,45 +54,46 @@ def init_db():
     conn.close()
 
 
-# --- Matrices ---
+# ─── Matrices ─────────────────────────────────────────────────────────────────
 
-def create_matrix(version, description="", parent_id=None):
+def get_all_matrices():
     conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO risk_matrices (version, description, parent_id) VALUES (?, ?, ?)",
-        (version, description, parent_id),
-    )
-    matrix_id = cursor.lastrowid
+    rows = conn.execute("""
+        SELECT m.*, COUNT(r.id) AS row_count
+        FROM risk_matrices m
+        LEFT JOIN matrix_rows r ON r.matrix_id = m.id
+        GROUP BY m.id
+        ORDER BY m.created_at DESC
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
-    # Heriter des impacts de la matrice parente
+
+def create_matrix(name, version, parent_id=None):
+    conn = get_db()
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO risk_matrices (name, version, parent_id) VALUES (?, ?, ?)",
+        (name, version, parent_id)
+    )
+    matrix_id = c.lastrowid
+
+    # Héritage des lignes du parent
     if parent_id:
-        cursor.execute(
-            """INSERT INTO module_impacts (matrix_id, module_name, impact_level, comment)
-               SELECT ?, module_name, impact_level, comment
-               FROM module_impacts WHERE matrix_id = ?""",
-            (matrix_id, parent_id),
-        )
+        c.execute("""
+            INSERT INTO matrix_rows (matrix_id, module, fonctionnalite, gitlab_iid, impact_level)
+            SELECT ?, module, fonctionnalite, gitlab_iid, impact_level
+            FROM matrix_rows WHERE matrix_id = ?
+        """, (matrix_id, parent_id))
 
     conn.commit()
     conn.close()
     return matrix_id
 
 
-def get_all_matrices():
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT * FROM risk_matrices ORDER BY created_at DESC"
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-
 def get_matrix(matrix_id):
     conn = get_db()
-    row = conn.execute(
-        "SELECT * FROM risk_matrices WHERE id = ?", (matrix_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM risk_matrices WHERE id = ?", (matrix_id,)).fetchone()
     conn.close()
     return dict(row) if row else None
 
@@ -93,46 +105,40 @@ def delete_matrix(matrix_id):
     conn.close()
 
 
-# --- Impacts par module ---
+# ─── Lignes ───────────────────────────────────────────────────────────────────
 
-def get_module_impacts(matrix_id):
+def get_matrix_rows(matrix_id):
     conn = get_db()
     rows = conn.execute(
-        "SELECT * FROM module_impacts WHERE matrix_id = ? ORDER BY module_name",
-        (matrix_id,),
+        "SELECT * FROM matrix_rows WHERE matrix_id = ? ORDER BY module, id",
+        (matrix_id,)
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
-def upsert_module_impact(matrix_id, module_name, impact_level, comment=""):
+def add_matrix_row(matrix_id, module, fonctionnalite="", gitlab_iid="", impact_level="non_defini"):
     conn = get_db()
-    conn.execute(
-        """INSERT INTO module_impacts (matrix_id, module_name, impact_level, comment, updated_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(matrix_id, module_name)
-           DO UPDATE SET impact_level = excluded.impact_level,
-                         comment = excluded.comment,
-                         updated_at = excluded.updated_at""",
-        (matrix_id, module_name, impact_level, comment, datetime.now()),
-    )
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO matrix_rows (matrix_id, module, fonctionnalite, gitlab_iid, impact_level)
+        VALUES (?, ?, ?, ?, ?)
+    """, (matrix_id, module, fonctionnalite, gitlab_iid, impact_level))
+    row_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return row_id
+
+
+def update_row_impact(row_id, impact_level):
+    conn = get_db()
+    conn.execute("UPDATE matrix_rows SET impact_level = ? WHERE id = ?", (impact_level, row_id))
     conn.commit()
     conn.close()
 
 
-def save_all_impacts(matrix_id, impacts_dict):
-    """impacts_dict: {module_name: {"impact_level": str, "comment": str}}"""
+def delete_row(row_id):
     conn = get_db()
-    for module_name, data in impacts_dict.items():
-        conn.execute(
-            """INSERT INTO module_impacts (matrix_id, module_name, impact_level, comment, updated_at)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT(matrix_id, module_name)
-               DO UPDATE SET impact_level = excluded.impact_level,
-                             comment = excluded.comment,
-                             updated_at = excluded.updated_at""",
-            (matrix_id, module_name, data.get("impact_level", "non_defini"),
-             data.get("comment", ""), datetime.now()),
-        )
+    conn.execute("DELETE FROM matrix_rows WHERE id = ?", (row_id,))
     conn.commit()
     conn.close()
