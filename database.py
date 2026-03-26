@@ -41,16 +41,28 @@ def init_db():
     # Table des lignes (une ligne = un ticket GitLab)
     c.execute("""
         CREATE TABLE IF NOT EXISTS matrix_rows (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            matrix_id       INTEGER NOT NULL,
-            module          TEXT    NOT NULL DEFAULT '',
-            fonctionnalite  TEXT    DEFAULT '',
-            gitlab_iid      TEXT    DEFAULT '',
-            impact_level    TEXT    NOT NULL DEFAULT 'non_defini',
-            created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            matrix_id           INTEGER NOT NULL,
+            module              TEXT    NOT NULL DEFAULT '',
+            fonctionnalite      TEXT    DEFAULT '',
+            gitlab_iid          TEXT    DEFAULT '',
+            impact_level        TEXT    NOT NULL DEFAULT 'non_defini',
+            weight              INTEGER DEFAULT NULL,
+            impact_description  TEXT    DEFAULT '',
+            created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (matrix_id) REFERENCES risk_matrices(id) ON DELETE CASCADE
         )
     """)
+
+    # Migrations : ajout des nouvelles colonnes sur DB existante
+    for col, definition in [
+        ("weight",             "INTEGER DEFAULT NULL"),
+        ("impact_description", "TEXT DEFAULT ''"),
+    ]:
+        try:
+            c.execute(f"ALTER TABLE matrix_rows ADD COLUMN {col} {definition}")
+        except Exception:
+            pass
 
     conn.commit()
     conn.close()
@@ -119,13 +131,15 @@ def get_matrix_rows(matrix_id):
     return [dict(r) for r in rows]
 
 
-def add_matrix_row(matrix_id, module, fonctionnalite="", gitlab_iid="", impact_level="non_defini"):
+def add_matrix_row(matrix_id, module, fonctionnalite="", gitlab_iid="",
+                   impact_level="non_defini", weight=None, impact_description=""):
     conn = get_db()
     c = conn.cursor()
     c.execute("""
-        INSERT INTO matrix_rows (matrix_id, module, fonctionnalite, gitlab_iid, impact_level)
-        VALUES (?, ?, ?, ?, ?)
-    """, (matrix_id, module, fonctionnalite, gitlab_iid, impact_level))
+        INSERT INTO matrix_rows
+            (matrix_id, module, fonctionnalite, gitlab_iid, impact_level, weight, impact_description)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (matrix_id, module, fonctionnalite, gitlab_iid, impact_level, weight, impact_description))
     row_id = c.lastrowid
     conn.commit()
     conn.close()

@@ -94,6 +94,8 @@
                     <th>Module</th>
                     <th>Fonctionnalité</th>
                     <th>N° GitLab</th>
+                    <th>Poids</th>
+                    <th>Impacts</th>
                     <th>Probabilité</th>
                     <th>Impact</th>
                     <th>Risque</th>
@@ -121,6 +123,14 @@
         <div class="form-group">
             <label for="newRowGitlab">N° GitLab :</label>
             <input type="text" id="newRowGitlab" class="input-control" placeholder="Ex: 7831">
+        </div>
+        <div class="form-group">
+            <label for="newRowWeight">Poids :</label>
+            <input type="number" id="newRowWeight" class="input-control" placeholder="Ex: 3" min="0">
+        </div>
+        <div class="form-group">
+            <label for="newRowImpactDesc">Impacts (description) :</label>
+            <textarea id="newRowImpactDesc" class="input-control" rows="2" placeholder="Description des impacts métier..."></textarea>
         </div>
         <div class="form-group">
             <label for="newRowImpact">Impact :</label>
@@ -264,6 +274,12 @@
                 <td><strong>${row.module}</strong></td>
                 <td>${row.fonctionnalite}</td>
                 <td class="center">${row.gitlab_iid || "-"}</td>
+                <td class="center">${row.weight !== null && row.weight !== undefined ? row.weight : "-"}</td>
+                <td class="center" title="${row.impact_description || ""}">${
+                    row.impact_description
+                        ? `<span class="impact-desc">${row.impact_description.substring(0, 60)}${row.impact_description.length > 60 ? "…" : ""}</span>`
+                        : "-"
+                }</td>
                 <td class="center">
                     <span class="badge badge-prob">${row.probability ? row.probability.label : "N/A"}</span>
                 </td>
@@ -361,6 +377,8 @@
         const module = document.getElementById("newRowModule").value.trim();
         const fonctionnalite = document.getElementById("newRowFonctionnalite").value.trim();
         const gitlabIid = document.getElementById("newRowGitlab").value.trim();
+        const weightVal = document.getElementById("newRowWeight").value.trim();
+        const impactDesc = document.getElementById("newRowImpactDesc").value.trim();
         const impactLevel = document.getElementById("newRowImpact").value;
 
         if (!module) {
@@ -372,13 +390,18 @@
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                module, fonctionnalite, gitlab_iid: gitlabIid, impact_level: impactLevel
+                module, fonctionnalite, gitlab_iid: gitlabIid,
+                weight: weightVal !== "" ? parseInt(weightVal) : null,
+                impact_description: impactDesc,
+                impact_level: impactLevel
             })
         }).then(() => {
             document.getElementById("addRowModal").classList.add("hidden");
             document.getElementById("newRowModule").value = "";
             document.getElementById("newRowFonctionnalite").value = "";
             document.getElementById("newRowGitlab").value = "";
+            document.getElementById("newRowWeight").value = "";
+            document.getElementById("newRowImpactDesc").value = "";
             loadMatrixDetail(currentMatrixId);
         });
     });

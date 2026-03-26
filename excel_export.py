@@ -74,39 +74,43 @@ def export_risk_matrix_to_excel(matrix_info, rows):
     ws.append([])
 
     # En-têtes colonnes
-    headers = ["Module", "Fonctionnalité", "N° GitLab", "Probabilité", "Impact", "Risque", "Commentaire"]
+    headers = ["Module", "Fonctionnalité", "N° GitLab", "Poids", "Impacts", "Probabilité", "Impact", "Risque"]
     for col, h in enumerate(headers, 1):
         _cell(ws, 5, col, h, fill=HEADER_FILL, font=HEADER_FONT)
 
     # Données
     for i, row in enumerate(rows, 6):
-        prob  = row.get("probability") or {}
+        prob   = row.get("probability") or {}
         impact = row.get("impact") or {}
 
-        _cell(ws, i, 1, row.get("module", ""),          align="left")
-        _cell(ws, i, 2, row.get("fonctionnalite", ""),  align="left", wrap=True)
+        weight_val = row.get("weight")
+        weight_display = weight_val if weight_val is not None else ""
+
+        _cell(ws, i, 1, row.get("module", ""),               align="left")
+        _cell(ws, i, 2, row.get("fonctionnalite", ""),       align="left", wrap=True)
         _cell(ws, i, 3, row.get("gitlab_iid", ""))
-        _cell(ws, i, 4, prob.get("label",  "N/A"))
-        _cell(ws, i, 5, impact.get("label","N/A"))
-        _cell(ws, i, 6, row.get("risk_label", "N/A"))
-        _cell(ws, i, 7, row.get("comment", ""),         align="left", wrap=True)
+        _cell(ws, i, 4, weight_display)
+        _cell(ws, i, 5, row.get("impact_description", ""),   align="left", wrap=True)
+        _cell(ws, i, 6, prob.get("label",  "N/A"))
+        _cell(ws, i, 7, impact.get("label","N/A"))
+        _cell(ws, i, 8, row.get("risk_label", "N/A"))
 
         # Couleur impact
         impact_fill = IMPACT_FILLS.get(row.get("impact_level", "non_defini"))
         if impact_fill:
-            ws.cell(row=i, column=5).fill = impact_fill
+            ws.cell(row=i, column=7).fill = impact_fill
             if row.get("impact_level") in ("critique", "majeur"):
-                ws.cell(row=i, column=5).font = Font(color="FFFFFF", bold=True)
+                ws.cell(row=i, column=7).font = Font(color="FFFFFF", bold=True)
 
         # Couleur risque
         risk_fill = RISK_FILLS.get(row.get("risk_key", "non_evalue"))
         if risk_fill:
-            ws.cell(row=i, column=6).fill = risk_fill
+            ws.cell(row=i, column=8).fill = risk_fill
             if row.get("risk_key") in ("critique", "eleve"):
-                ws.cell(row=i, column=6).font = Font(color="FFFFFF", bold=True)
+                ws.cell(row=i, column=8).font = Font(color="FFFFFF", bold=True)
 
     # Largeurs
-    for col, width in enumerate([20, 45, 12, 16, 12, 12, 30], 1):
+    for col, width in enumerate([20, 40, 12, 8, 35, 14, 12, 12], 1):
         ws.column_dimensions[get_column_letter(col)].width = width
 
     ws.row_dimensions[5].height = 22

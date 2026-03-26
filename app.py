@@ -180,12 +180,17 @@ def api_add_row(matrix_id):
     if not module:
         return jsonify({"error": "Le module est requis."}), 400
 
+    weight_raw = body.get("weight")
+    weight = int(weight_raw) if weight_raw not in (None, "", "null") else None
+
     row_id = add_matrix_row(
         matrix_id,
         module=module,
         fonctionnalite=body.get("fonctionnalite", "").strip(),
         gitlab_iid=str(body.get("gitlab_iid", "")).strip(),
         impact_level=body.get("impact_level", "non_defini"),
+        weight=weight,
+        impact_description=body.get("impact_description", "").strip(),
     )
     return jsonify({"id": row_id}), 201
 
@@ -205,6 +210,31 @@ def api_delete_row(row_id):
 
 
 # ─── Import CSV ───────────────────────────────────────────────────────────────
+
+def _extract_impact_from_text(text):
+    """
+    Cherche une section [Impact] (insensible à la casse) dans un texte markdown.
+    Retourne le contenu trouvé, ou '' si absent.
+    Formats supportés : [impact], ## impact, **impact**, # impact
+    """
+    import re
+    if not text:
+        return ""
+    # Pattern : ligne contenant [impact] ou ## impact ou **impact** suivie du contenu
+    pattern = re.compile(
+        r'(?:^|\n)\s*(?:\[impact\]|#{1,3}\s*impact|\*{1,2}impact\*{1,2})'
+        r'[^\n]*\n(.*?)(?=\n\s*(?:\[|\#|\*{1,2}\w|\Z))',
+        re.IGNORECASE | re.DOTALL
+    )
+    match = pattern.search(text)
+    if match:
+        return match.group(1).strip()[:500]  # max 500 chars
+    # Fallback : cherche simplement "impact" suivi de ":" sur la même ligne
+    simple = re.search(r'impact\s*[:：]\s*(.+)', text, re.IGNORECASE)
+    if simple:
+        return simple.group(1).strip()[:500]
+    return ""
+
 
 def _find_column(headers, candidates):
     """Trouve la première colonne correspondant à l'une des variantes."""
@@ -237,6 +267,8 @@ def api_import_csv(matrix_id):
     # Détection flexible des colonnes
     title_idx   = _find_column(headers, ["Title", "title", "Titre", "titre"])
     iid_idx     = _find_column(headers, ["Issue ID", "issue_id", "IID", "iid", "ID", "id"])
+    weight_idx  = _find_column(headers, ["Weight", "weight", "Poids", "poids"])
+    desc_idx    = _find_column(headers, ["Description", "description"])
 
     if title_idx is None:
         return jsonify({"error": "Colonne 'Title' introuvable dans le CSV."}), 400
@@ -256,6 +288,21 @@ def api_import_csv(matrix_id):
         if iid_idx is not None and iid_idx < len(row_values):
             gitlab_iid = str(row_values[iid_idx]).strip()
 
+        # Poids
+        weight = None
+        if weight_idx is not None and weight_idx < len(row_values):
+            w = row_values[weight_idx].strip()
+            try:
+                weight = int(w) if w else None
+            except ValueError:
+                weight = None
+
+        # Impact : chercher [impact] dans la description (insensible à la casse)
+        impact_description = ""
+        if desc_idx is not None and desc_idx < len(row_values):
+            desc = row_values[desc_idx]
+            impact_description = _extract_impact_from_text(desc)
+
         # Extraction modules et fonctionnalité depuis le titre
         from data_processor import extract_all_modules, extract_fonctionnalite
         all_mods = extract_all_modules(title)
@@ -268,6 +315,8 @@ def api_import_csv(matrix_id):
             fonctionnalite=fonctionnalite,
             gitlab_iid=gitlab_iid,
             impact_level="non_defini",
+            weight=weight,
+            impact_description=impact_description,
         )
         count += 1
 
